@@ -6,6 +6,36 @@ import { Buffer } from 'buffer';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 
+interface PhantomProvider {
+  isPhantom?: boolean;
+  publicKey?: {
+    toBase58(): string;
+  };
+  signAndSendTransaction?: (
+    transaction: Transaction
+  ) => Promise<{ signature: string } | string>;
+}
+
+const getActivePhantomProvider = (walletAddress: string): PhantomProvider | null => {
+  const phantomProvider = (window as typeof window & {
+    phantom?: { solana?: PhantomProvider };
+  })?.phantom?.solana;
+
+  if (!phantomProvider?.isPhantom || !phantomProvider?.publicKey || !phantomProvider?.signAndSendTransaction) {
+    return null;
+  }
+
+  const phantomAddress = phantomProvider.publicKey.toBase58?.();
+  if (!phantomAddress || phantomAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+    return null;
+  }
+
+  return phantomProvider;
+};
+
+const extractSignature = (result: { signature: string } | string): string =>
+  typeof result === 'string' ? result : result.signature;
+
 export function usePhantomPaymentFlow() {
   const [isProcessing, setIsProcessing] = useState(false);
   const { isConnected } = useAppKitAccount();
@@ -40,11 +70,14 @@ export function usePhantomPaymentFlow() {
       }
 
       const transaction = Transaction.from(Buffer.from(txPayload.transaction, 'base64'));
-
-      const signature = await walletProvider.sendTransaction(
-        transaction as unknown as Parameters<typeof walletProvider.sendTransaction>[0],
-        connection as Parameters<typeof walletProvider.sendTransaction>[1]
-      );
+      const phantomProvider = getActivePhantomProvider(walletAddress);
+      const phantomSignAndSend = phantomProvider?.signAndSendTransaction;
+      const signature = phantomProvider
+        ? extractSignature(await phantomSignAndSend!(transaction))
+        : await walletProvider.sendTransaction(
+            transaction as unknown as Parameters<typeof walletProvider.sendTransaction>[0],
+            connection as Parameters<typeof walletProvider.sendTransaction>[1]
+          );
 
       const confirmResponse = await fetch(`${SERVER_URL}/api/payment/${sessionKey}/confirm-payment`, {
         method: 'POST',
