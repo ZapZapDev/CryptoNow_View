@@ -1,8 +1,12 @@
 import QRCode from 'qrcode';
 
-export class PhantomQrService {
-  constructor({ baseUrl }) {
-    this.baseUrl = baseUrl;
+const config = {
+  baseUrl: process.env.PUBLIC_BASE_URL,
+  frontendUrl: process.env.FRONTEND_URL
+};
+
+class PhantomQrService {
+  constructor() {
     this.SOLANA_PREFIX = 'solana:';
     this.qrOptions = {
       type: '',
@@ -18,22 +22,49 @@ export class PhantomQrService {
   }
 
   ensureAllowedScheme(data) {
-    if (data.startsWith('solana:')) return;
+    const allowed = new Set(['solana:', 'https:']);
+    if (process.env.NODE_ENV !== 'PROD' || config.frontendUrl?.startsWith('http://')) {
+      allowed.add('http:');
+    }
+
+    if (data.startsWith('solana:')) {
+      return;
+    }
 
     const protocol = new URL(data).protocol;
-    if (protocol !== 'https:') {
+    if (!allowed.has(protocol)) {
       throw new Error('Invalid QR data - unsupported scheme');
     }
   }
 
-  createSolanaPayUrl(sessionKey) {
-    const transactionUrl = `${this.baseUrl}/api/payment/merchant/${sessionKey}/transaction`;
-    return `${this.SOLANA_PREFIX}${transactionUrl}`;
+  async generateQR(data) {
+    this.ensureAllowedScheme(data);
+    return QRCode.toDataURL(data, this.qrOptions);
   }
 
-  async generatePaymentQr(sessionKey) {
-    const solanaPayUrl = this.createSolanaPayUrl(sessionKey);
-    this.ensureAllowedScheme(solanaPayUrl);
-    return QRCode.toDataURL(solanaPayUrl, this.qrOptions);
+  resolveBaseUrl() {
+    const rawBaseUrl = String(config.baseUrl || '').trim();
+    if (!rawBaseUrl) {
+      throw new Error('BASE_URL is not configured');
+    }
+
+    const baseUrl = new URL(rawBaseUrl);
+    if (process.env.NODE_ENV === 'PROD' && baseUrl.protocol !== 'https:') {
+      throw new Error('BASE_URL must use https in production');
+    }
+
+    return baseUrl;
+  }
+
+  createSolanaPayUrl(sessionKey) {
+    const baseUrl = this.resolveBaseUrl();
+    const transactionUrl = new URL(`/api/payment/merchant/${encodeURIComponent(sessionKey)}/transaction`, baseUrl);
+    return `${this.SOLANA_PREFIX}${transactionUrl.toString()}`;
+  }
+
+  async createPaymentQR(sessionKey) {
+    return this.generateQR(this.createSolanaPayUrl(sessionKey));
   }
 }
+
+export default new PhantomQrService();
