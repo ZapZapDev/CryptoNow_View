@@ -9,9 +9,6 @@ const config = {
   }
 };
 
-const txCache = new Map();
-const TX_CACHE_TTL_MS = 60 * 1000;
-
 export async function createMerchantTransaction(req, res) {
   try {
     const { sessionKey } = req.params;
@@ -58,15 +55,6 @@ export async function createMerchantTransaction(req, res) {
     const feeLower = String(config.cryptonow.feeWallet || '').toLowerCase();
     if ((merchantLower && payerLower === merchantLower) || (feeLower && payerLower === feeLower)) {
       return res.status(400).json({ error: 'Self-payment is not allowed' });
-    }
-
-    const cacheKey = `${payment.id}:${payerLower}`;
-    const cached = txCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return res.json({
-        transaction: cached.transaction,
-        message: `Payment - $${displayAmount}`
-      });
     }
 
     try {
@@ -120,11 +108,6 @@ export async function createMerchantTransaction(req, res) {
     const serializedTx = tx.serialize({
       requireAllSignatures: false,
       verifySignatures: false
-    });
-
-    txCache.set(cacheKey, {
-      transaction: serializedTx.toString('base64'),
-      expiresAt: Date.now() + TX_CACHE_TTL_MS
     });
 
     return res.json({
